@@ -203,7 +203,10 @@ static int parseArgs(int Argc, const char *Argv[],
   Argc = argparse_parse(&Arguments, Argc, Argv);
 
   // Handle positional arguments
-  if (Argc != 2) {
+  if (Argc < 2) {
+    fprintf(stderr, "Not enough arguments.\n");
+    return EXIT_FAILURE;
+  } else if (Argc > 2) {
     fprintf(stderr, "Too many arguments.\n");
     return EXIT_FAILURE;
   }
