@@ -123,6 +123,7 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
   // Look for static or dynamic symbols
   using Elf_ShdrPtr = decltype(&(*TheELF.sections().begin()));
   Elf_ShdrPtr SymtabShdr = nullptr;
+  Elf_ShdrPtr DynSymShdr = nullptr;
   Optional<uint64_t> EHFrameAddress;
   Optional<uint64_t> EHFrameSize;
   Optional<uint64_t> EHFrameHdrAddress;
@@ -131,16 +132,22 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
     auto Name = TheELF.getSectionName(&Section);
     if (Name) {
       if (*Name == ".symtab") {
-        // .symtab might override .dynsym
+        assert(!SymtabShdr && "Duplicate .symtab");
         SymtabShdr = &Section;
-      } else if (SymtabShdr == nullptr && *Name == ".dynsym") {
-        SymtabShdr = &Section;
+      } else if (*Name == ".dynsym") {
+        assert(!DynSymShdr && "Duplicate .dynsym");
+        DynSymShdr = &Section;
       } else if (*Name == ".eh_frame") {
         assert(!EHFrameAddress && "Duplicate .eh_frame");
         EHFrameAddress = static_cast<uint64_t>(Section.sh_addr);
         EHFrameSize = static_cast<uint64_t>(Section.sh_size);
       }
     }
+  }
+
+  // If symtab is missing use .dynsym for symbol enumeration
+  if (!SymtabShdr) {
+    SymtabShdr = DynSymShdr;
   }
 
   // If we found a symbol table
