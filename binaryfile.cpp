@@ -120,10 +120,12 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
   object::ELFFile<T> TheELF(TheBinary->getData(), EC);
   assert(!EC && "Error while loading the ELF file");
 
-  // Look for static or dynamic symbols
+  // Look for static or dynamic symbols and relocations
   using Elf_ShdrPtr = decltype(&(*TheELF.sections().begin()));
   Elf_ShdrPtr SymtabShdr = nullptr;
   Elf_ShdrPtr DynSymShdr = nullptr;
+  std::vector<Elf_ShdrPtr> RelShdrs;
+  std::vector<Elf_ShdrPtr> RelaShdrs;
   Optional<uint64_t> EHFrameAddress;
   Optional<uint64_t> EHFrameSize;
   Optional<uint64_t> EHFrameHdrAddress;
@@ -137,6 +139,10 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
       } else if (*Name == ".dynsym") {
         assert(!DynSymShdr && "Duplicate .dynsym");
         DynSymShdr = &Section;
+      } else if (Name->startswith(".rela.")) {
+        RelaShdrs.push_back(&Section);
+      } else if (Name->startswith(".rel.")) {
+        RelShdrs.push_back(&Section);
       } else if (*Name == ".eh_frame") {
         assert(!EHFrameAddress && "Duplicate .eh_frame");
         EHFrameAddress = static_cast<uint64_t>(Section.sh_addr);
@@ -176,6 +182,48 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
         Symbol.st_size
       });
     }
+  }
+
+  // If we have a .dynsym section enumerate relocations
+  if (DynSymShdr) {
+    for (auto &Section : RelaShdrs) {
+      // Obtain a reference to the string table
+      auto *Strtab = TheELF.getSection(DynSymShdr->sh_link).get();
+      auto StrtabArray = TheELF.getSectionContents(Strtab).get();
+      StringRef StrtabContent(reinterpret_cast<const char *>(StrtabArray.data()),
+                              StrtabArray.size());
+
+      // Collect relocation names
+      for (auto &Rela : TheELF.relas(Section)) {
+        auto Symbol = TheELF.getSymbol(DynSymShdr, Rela.getSymbol(false));
+
+        Relocations.push_back({
+          Symbol->getName(StrtabContent).get(),
+          Rela.r_addend,
+          Rela.r_offset
+        });
+      }
+    }
+
+    for (auto &Section : RelShdrs) {
+      // Obtain a reference to the string table
+      auto *Strtab = TheELF.getSection(DynSymShdr->sh_link).get();
+      auto StrtabArray = TheELF.getSectionContents(Strtab).get();
+      StringRef StrtabContent(reinterpret_cast<const char *>(StrtabArray.data()),
+                              StrtabArray.size());
+
+      // Collect relocation names
+      for (auto &Rel : TheELF.rels(Section)) {
+        auto Symbol = TheELF.getSymbol(DynSymShdr, Rel.getSymbol(false));
+
+        Relocations.push_back({
+          Symbol->getName(StrtabContent).get(),
+          0,
+          Rel.r_offset
+        });
+      }
+    }
+
   }
 
   const auto *ElfHeader = TheELF.getHeader();

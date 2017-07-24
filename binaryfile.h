@@ -83,6 +83,22 @@ struct SymbolInfo {
   }
 };
 
+/// \brief Simple data structure to describe a relocation in an image format
+///        independent way
+struct RelocationInfo {
+  llvm::StringRef Name;
+  int64_t Addend;
+  uint64_t Address;
+
+  bool operator<(const RelocationInfo &Other) const {
+    return Address < Other.Address;
+  }
+
+  bool operator==(const RelocationInfo &Other) const {
+    return Name == Other.Name && Addend == Other.Addend && Address == Other.Address;
+  }
+};
+
 //
 // What follows is a set of functions we use to read an integer of a specified
 // (or pointer) size using the appropriate endianess associated to an ELF type.
@@ -271,6 +287,7 @@ private:
   llvm::object::OwningBinary<llvm::object::Binary> BinaryHandle;
   Architecture TheArchitecture;
   std::vector<SymbolInfo> Symbols;
+  std::vector<RelocationInfo> Relocations;
   std::vector<SegmentInfo> Segments;
   std::set<uint64_t> LandingPads; ///< the set of the landing pad addresses
                                   ///  collected from .eh_frame
