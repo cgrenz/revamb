@@ -141,6 +141,14 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
         assert(!EHFrameAddress && "Duplicate .eh_frame");
         EHFrameAddress = static_cast<uint64_t>(Section.sh_addr);
         EHFrameSize = static_cast<uint64_t>(Section.sh_size);
+      } else if (*Name == ".plt") {
+        // Add .plt section to symbol table.
+        // This eases debugging dynamically linked code.
+        Symbols.push_back({
+          *Name,
+          Section.sh_addr,
+          Section.sh_size
+        });
       }
     }
   }
