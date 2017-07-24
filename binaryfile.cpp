@@ -165,11 +165,13 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
     auto StrtabArray = TheELF.getSectionContents(Strtab).get();
     StringRef StrtabContent(reinterpret_cast<const char *>(StrtabArray.data()),
                             StrtabArray.size());
-
     // Collect symbol names
     for (auto &Symbol : TheELF.symbols(SymtabShdr)) {
+      auto NameSymVer = Symbol.getName(StrtabContent).get().split("@@");
+      auto Name = NameSymVer.first;
+
       Symbols.push_back({
-        Symbol.getName(StrtabContent).get(),
+        Name,
         Symbol.st_value,
         Symbol.st_size
       });
