@@ -219,6 +219,7 @@ public:
   std::vector<SegmentInfo> &segments() { return Segments; }
   const std::vector<SegmentInfo> &segments() const { return Segments; }
   const std::vector<SymbolInfo> &symbols() const { return Symbols; }
+  const std::vector<RelocationInfo> &relocations() const { return Relocations; }
   const std::set<uint64_t> &landingPads() const { return LandingPads; }
   uint64_t entryPoint() const { return EntryPoint; }
 

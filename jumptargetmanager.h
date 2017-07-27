@@ -22,6 +22,7 @@
 #include "datastructures.h"
 #include "ir-helpers.h"
 #include "noreturnanalysis.h"
+#include "relocationpass.h"
 #include "revamb.h"
 
 // Forward declarations
@@ -197,6 +198,9 @@ public:
                     llvm::Value *PCReg,
                     const BinaryFile &Binary,
                     bool EnableOSRA);
+
+  /// \brief Get current LLVM context
+  llvm::LLVMContext &getContext() const { return Context; }
 
   /// \brief Transform the IR to represent the request form of CFG
   void setCFGForm(CFGForm NewForm);
