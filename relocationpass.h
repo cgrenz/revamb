@@ -10,6 +10,7 @@
 #include <vector>
 
 // LLVM includes
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/ADT/Optional.h"
 
 // Local includes
@@ -32,22 +33,21 @@ class Value;
 
 class JumpTargetManager;
 
-/// \brief Transform writes from relocations to the PC in jumps
+/// \brief Finds and tags accesses to dynamic linking relocations
 ///
-/// This pass looks for all writes to the PC that originate from a 
-/// load from a relocation and replaces it with *something*.
-class TranslateRelocationCallsPass : public llvm::BasicBlockPass {
+/// This pass looks for loads from relocation addresses and tags them with
+/// "revamb.relocation" metadata
+class LocateRelocationAccessesPass final : public llvm::BasicBlockPass {
 public:
   static char ID;
 
-  TranslateRelocationCallsPass() : llvm::BasicBlockPass(ID),
+  LocateRelocationAccessesPass() : llvm::BasicBlockPass(ID),
     MDKindId(0),
-    JTM(nullptr), Relocations(nullptr) { }
+    Relocations(nullptr) { }
 
-  TranslateRelocationCallsPass(JumpTargetManager *JTM, const std::vector<RelocationInfo> *Relocations) :
+  LocateRelocationAccessesPass(const std::vector<RelocationInfo> *Relocations) :
     BasicBlockPass(ID),
     MDKindId(0),
-    JTM(JTM),
     Relocations(Relocations) { }
 
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
@@ -56,12 +56,41 @@ public:
 
 private:
   bool handleLoad(llvm::LoadInst &Load);
-  bool handlePCStore(llvm::StoreInst &Store);
-  void buildCall(llvm::StoreInst &Store, llvm::StringRef Name);
+
+  unsigned int MDKindId;
+  const std::vector<RelocationInfo> *Relocations;
+};
+
+/// \brief Adds calls for PC writes from dynamic linking relocations
+///
+/// This pass looks for writes to the PC that originate from relocation loads
+/// and adds a call to "dl.{symbol name}".
+class AddRelocationCallsPass final : public llvm::ModulePass, public llvm::InstVisitor<AddRelocationCallsPass> {
+public:
+  static char ID;
+
+  AddRelocationCallsPass() : llvm::ModulePass(ID),
+    MDKindId(0),
+    JTM(nullptr) { }
+
+  AddRelocationCallsPass(JumpTargetManager *JTM) :
+    llvm::ModulePass(ID),
+    MDKindId(0),
+    JTM(JTM) {}
+
+  void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
+
+  bool runOnModule(llvm::Module &M) override;
+  void visitStoreInst(llvm::StoreInst &I);
+
+private:
+  void buildCall(llvm::StoreInst &I, llvm::StringRef Name);
+  bool succeededByCall(const llvm::Instruction &I, llvm::StringRef Function);
+  llvm::StringRef getRelocName(const llvm::Instruction &I, bool needsZeroAddend);
   
   unsigned int MDKindId;
+  bool MadeChange;
   JumpTargetManager *JTM;
-  const std::vector<RelocationInfo> *Relocations;
 };
 
 

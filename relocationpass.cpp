@@ -1,7 +1,5 @@
-/// \file jumptargetmanager.cpp
-/// \brief This file handles the possible jump targets encountered during
-///        translation and the creation and management of the respective
-///        BasicBlock.
+/// \file relocationpass.cpp
+/// \brief This file handles relocations for dynamically linked symbols
 
 //
 // This file is distributed under the MIT License. See LICENSE.md for details.
@@ -44,25 +42,32 @@
 
 using namespace llvm;
 
-char TranslateRelocationCallsPass::ID = 0;
+char LocateRelocationAccessesPass::ID = 0;
 
-static RegisterPass<TranslateRelocationCallsPass> X("translate-reloc",
-                                                   "Translate Relocation Calls"
+char AddRelocationCallsPass::ID = 0;
+
+static RegisterPass<LocateRelocationAccessesPass> X1("locate-relocations",
+                                                   "Locate Relocation Accesses"
+                                                   " Pass",
+                                                   false,
+                                                   false);
+
+static RegisterPass<AddRelocationCallsPass> X2("add-relocation-calls",
+                                                   "Add Relocation Calls"
                                                    " Pass",
                                                    false,
                                                    false);
 
 
-void TranslateRelocationCallsPass::getAnalysisUsage(AnalysisUsage &AU) const {
+void LocateRelocationAccessesPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DominatorTreeWrapperPass>();
-  AU.addUsedIfAvailable<SETPass>();
   AU.setPreservesAll();
 }
 
-bool TranslateRelocationCallsPass::runOnBasicBlock(llvm::BasicBlock &BB) {
+bool LocateRelocationAccessesPass::runOnBasicBlock(llvm::BasicBlock &BB) {
   bool Result = false;
-  MDKindId = JTM->getContext().getMDKindID("revamb.relocation");
-  
+  MDKindId = BB.getContext().getMDKindID("revamb.relocation");
+
   for (auto &I: BB) {
     if (auto *Load = dyn_cast<LoadInst>(&I)) {
       Result |= handleLoad(*Load);
@@ -72,8 +77,8 @@ bool TranslateRelocationCallsPass::runOnBasicBlock(llvm::BasicBlock &BB) {
   return Result;
 }
 
-bool TranslateRelocationCallsPass::handleLoad(llvm::LoadInst &Load) {
-  LLVMContext &Ctx = JTM->getContext();
+bool LocateRelocationAccessesPass::handleLoad(llvm::LoadInst &Load) {
+  LLVMContext &Ctx = Load.getParent()->getContext();
   auto *ConstExpr = dyn_cast<llvm::ConstantExpr>(Load.getPointerOperand());
   if (!ConstExpr || ConstExpr->getOpcode() != Instruction::IntToPtr) {
     return false;
@@ -85,7 +90,7 @@ bool TranslateRelocationCallsPass::handleLoad(llvm::LoadInst &Load) {
   for (const auto &Reloc : *Relocations) {
     if (ConstInt->equalsInt(Reloc.Address)) {
       if (!Load.getMetadata(MDKindId)) {
-        
+
         // Tag relocation loads with metadata
         auto *Int64 = IntegerType::get(Ctx, 64);
         auto *Meta = MDNode::get(Ctx, {
@@ -93,14 +98,7 @@ bool TranslateRelocationCallsPass::handleLoad(llvm::LoadInst &Load) {
           ConstantAsMetadata::get(ConstantInt::get(Int64, Reloc.Addend))
         });
         Load.setMetadata(MDKindId, Meta);
-        
-        for (auto *User : Load.users()) {
-          auto *Store = dyn_cast<StoreInst>(User);
-          if (Store && JTM->isPCReg(Store->getPointerOperand())) {
-            handlePCStore(*Store);
-          }
-        }
-      
+
         return true;
       }
     }
@@ -108,32 +106,77 @@ bool TranslateRelocationCallsPass::handleLoad(llvm::LoadInst &Load) {
   return false;
 }
 
-bool TranslateRelocationCallsPass::handlePCStore(llvm::StoreInst &Store) {
-  if (auto *Load = dyn_cast<LoadInst>(Store.getValueOperand())) {
-    auto *MDNode = Load->getMetadata(MDKindId);
-    if (MDNode) {
-      StringRef RelocName = dyn_cast<MDString>(MDNode->getOperand(0))->getString();
-      auto *RelocAddend = dyn_cast<ConstantAsMetadata>(MDNode->getOperand(1));
-      bool ZeroAddend = dyn_cast<ConstantInt>(RelocAddend->getValue())->isZero();
-      
-      if (ZeroAddend) {
-        buildCall(Store, RelocName);
-      }
-      
-    }
-  }
-  return false;
+void AddRelocationCallsPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addUsedIfAvailable<LocateRelocationAccessesPass>();
+  AU.setPreservesAll();
 }
 
-void TranslateRelocationCallsPass::buildCall(llvm::StoreInst &Store, StringRef Name) {
-  LLVMContext &Ctx = JTM->getContext();
-  Module *M = Store.getParent()->getModule();
-  
-  auto *FType = FunctionType::get(Type::getVoidTy(Ctx), true);
-  
-  IRBuilder<> Builder(&Store);
-  auto *Callee = M->getOrInsertFunction(Name, FType);
-  
-  Builder.CreateCall(Callee, {});
-  
+bool AddRelocationCallsPass::runOnModule(llvm::Module &M) {
+  MadeChange = false;
+  MDKindId = M.getContext().getMDKindID("revamb.relocation");
+
+  visit(M);
+
+  return MadeChange;
+}
+
+void AddRelocationCallsPass::visitStoreInst(llvm::StoreInst &I) {
+  if (!JTM->isPCReg(I.getPointerOperand())) {
+    return;
+  }
+  if (auto *Load = dyn_cast<LoadInst>(I.getValueOperand())) {
+    StringRef RelocName = getRelocName(*Load, true);
+    if (!RelocName.empty()) {
+      std::string Name = "dl." + RelocName.str();
+      if (!succeededByCall(I, Name)) {
+        buildCall(I, Name);
+        MadeChange = true;
+      }
+    }
+  }
+}
+
+StringRef AddRelocationCallsPass::getRelocName(const llvm::Instruction &I, bool needsZeroAddend) {
+  const auto *MDNode = I.getMetadata(MDKindId);
+  if (MDNode) {
+    StringRef RelocName = dyn_cast<MDString>(MDNode->getOperand(0))->getString();
+    const auto *RelocAddend = dyn_cast<ConstantAsMetadata>(MDNode->getOperand(1));
+
+    if (!needsZeroAddend || dyn_cast<ConstantInt>(RelocAddend->getValue())->isZero()) {
+      return RelocName;
+    }
+  }
+  return {};
+}
+
+bool AddRelocationCallsPass::succeededByCall(const llvm::Instruction &I, llvm::StringRef Function) {
+  const auto *Call = dyn_cast<CallInst>(I.getNextNode());
+  if (Call) {
+    const auto *F = Call->getCalledFunction();
+    return (F && (Function.equals(F->getName())));
+  } else {
+    return false;
+  }
+}
+
+void AddRelocationCallsPass::buildCall(llvm::StoreInst &I, StringRef Name) {
+  Module *M = I.getParent()->getModule();
+  LLVMContext &Ctx = M->getContext();
+  auto *FType = FunctionType::get(Type::getVoidTy(Ctx), false);
+
+  // Get or create function
+  auto *Value = M->getOrInsertFunction(Name, FType);
+  auto *Func = dyn_cast<Function>(Value);
+  if (Func && Func->isDeclaration()) {
+    BasicBlock *Entry = BasicBlock::Create(Ctx, "", Func);
+    IRBuilder<> Builder(Entry);
+    Builder.CreateRetVoid();
+  }
+
+  // Insert call
+  auto *NextNode = I.getNextNode();
+  assert(NextNode != nullptr);
+  IRBuilder<> Builder(I.getNextNode());
+  std::string FName = "dl." + Name.str();
+  Builder.CreateCall(Value, {});
 }

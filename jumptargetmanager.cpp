@@ -1309,7 +1309,8 @@ void JumpTargetManager::harvest() {
     legacy::PassManager AnalysisPM;
     AnalysisPM.add(new SETPass(this, false, &Visited));
     AnalysisPM.add(new TranslateDirectBranchesPass(this));
-    AnalysisPM.add(new TranslateRelocationCallsPass(this, &Binary.relocations()));
+    AnalysisPM.add(new LocateRelocationAccessesPass(&Binary.relocations()));
+    AnalysisPM.add(new AddRelocationCallsPass(this));
     AnalysisPM.run(TheModule);
 
     // Restore the CFG
