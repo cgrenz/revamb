@@ -185,7 +185,7 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
   }
 
   // If we have a .dynsym section enumerate relocations
-  if (DynSymShdr) {
+  if (DynSymShdr && DynSymShdr->sh_link != 0) {
     for (auto &Section : RelaShdrs) {
       // Obtain a reference to the string table
       auto *Strtab = TheELF.getSection(DynSymShdr->sh_link).get();
