@@ -220,6 +220,7 @@ public:
   const std::vector<SegmentInfo> &segments() const { return Segments; }
   const std::vector<SymbolInfo> &symbols() const { return Symbols; }
   const std::vector<RelocationInfo> &relocations() const { return Relocations; }
+  const std::vector<llvm::StringRef> &dynamic_libraries() const { return DynamicLibraries; }
   const std::set<uint64_t> &landingPads() const { return LandingPads; }
   uint64_t entryPoint() const { return EntryPoint; }
 
@@ -289,6 +290,7 @@ private:
   Architecture TheArchitecture;
   std::vector<SymbolInfo> Symbols;
   std::vector<RelocationInfo> Relocations;
+  std::vector<llvm::StringRef> DynamicLibraries;
   std::vector<SegmentInfo> Segments;
   std::set<uint64_t> LandingPads; ///< the set of the landing pad addresses
                                   ///  collected from .eh_frame

@@ -223,7 +223,6 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
         });
       }
     }
-
   }
 
   const auto *ElfHeader = TheELF.getHeader();
@@ -283,6 +282,53 @@ void BinaryFile::parseELF(object::ObjectFile *TheBinary, bool UseSections) {
     case ELF::PT_GNU_EH_FRAME:
       assert(!EHFrameHdrAddress);
       EHFrameHdrAddress = ProgramHeader.p_vaddr;
+      break;
+
+    case ELF::PT_DYNAMIC:
+      {
+        // Parse dynamic section to get information about needed
+        // dynamic libraries
+
+        std::vector<uint64_t> DynStrOffsets;
+        uint64_t DynStrtabAddr = 0;
+        using ELF_Dyn = const typename object::ELFFile<T>::Elf_Dyn;
+        auto &DynTable = *TheELF.dynamic_table(&ProgramHeader);
+        for (const ELF_Dyn &Dyn: DynTable) {
+          switch (Dyn.getTag()) {
+          case llvm::ELF::DT_NEEDED:
+            // Collect library name indexes
+            DynStrOffsets.push_back(Dyn.getVal());
+            break;
+          case llvm::ELF::DT_STRTAB:
+            // Find string table address
+            DynStrtabAddr = Dyn.getPtr();
+            break;
+          }
+        }
+
+        if (DynStrtabAddr && !DynStrOffsets.empty()) {
+
+          // Obtain a reference to the string table
+          Elf_ShdrPtr DynStrtab = nullptr;
+          for (auto &Section : TheELF.sections()){
+            if (Section.sh_addr == DynStrtabAddr) {
+              DynStrtab = &Section;
+            }
+          }
+          // If string table found, map offsets to library names
+          if (DynStrtab) {
+            auto StrtabArray = TheELF.getSectionContents(DynStrtab).get();
+            StringRef StrtabContent(reinterpret_cast<const char *>(StrtabArray.data()),
+                                    StrtabArray.size());
+
+            // Get library names
+            for (uint64_t Offset: DynStrOffsets) {
+              StringRef LibName = StrtabContent.slice(Offset, StrtabContent.find('\0', Offset));
+              DynamicLibraries.push_back(LibName);
+            }
+          }
+        }
+      }
       break;
     }
 

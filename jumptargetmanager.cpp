@@ -1311,6 +1311,7 @@ void JumpTargetManager::harvest() {
     AnalysisPM.add(new TranslateDirectBranchesPass(this));
     AnalysisPM.add(new LocateRelocationAccessesPass(&Binary.relocations()));
     AnalysisPM.add(new AddRelocationCallsPass(this));
+    AnalysisPM.add(new AddLibraryMetadataPass(&Binary.dynamic_libraries()));
     AnalysisPM.run(TheModule);
 
     // Restore the CFG

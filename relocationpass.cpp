@@ -43,8 +43,8 @@
 using namespace llvm;
 
 char LocateRelocationAccessesPass::ID = 0;
-
 char AddRelocationCallsPass::ID = 0;
+char AddLibraryMetadataPass::ID = 0;
 
 static RegisterPass<LocateRelocationAccessesPass> X1("locate-relocations",
                                                    "Locate Relocation Accesses"
@@ -54,6 +54,12 @@ static RegisterPass<LocateRelocationAccessesPass> X1("locate-relocations",
 
 static RegisterPass<AddRelocationCallsPass> X2("add-relocation-calls",
                                                    "Add Relocation Calls"
+                                                   " Pass",
+                                                   false,
+                                                   false);
+
+static RegisterPass<AddRelocationCallsPass> X3("add-library-metadata",
+                                                   "Add Metadata for Dynamic Libraries"
                                                    " Pass",
                                                    false,
                                                    false);
@@ -179,4 +185,40 @@ void AddRelocationCallsPass::buildCall(llvm::StoreInst &I, StringRef Name) {
   IRBuilder<> Builder(I.getNextNode());
   std::string FName = "dl." + Name.str();
   Builder.CreateCall(Value, {});
+}
+
+void AddLibraryMetadataPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.setPreservesAll();
+}
+
+bool AddLibraryMetadataPass::runOnModule(llvm::Module &M) {
+  LLVMContext &Ctx = M.getContext();
+  NamedMDNode *Root = M.getNamedMetadata("revamb.dynamic_libraries");
+  NamedMDNode *LinkerOptions;
+  size_t Count = 0;
+
+  // Stop if metadata already exists
+  if (Root) {
+    return false;
+  } else {
+    Root = M.getOrInsertNamedMetadata("revamb.dynamic_libraries");
+    LinkerOptions = M.getOrInsertNamedMetadata("llvm.linker.options");
+  }
+
+  for (llvm::StringRef LibName: *Libraries) {
+    llvm::StringRef ShortLibName = LibName.slice(0, LibName.find('.', 1));
+    if (ShortLibName.startswith("lib")) {
+      ShortLibName = ShortLibName.slice(3, llvm::StringRef::npos);
+    }
+
+    Root->addOperand(MDNode::get(Ctx, { MDString::get(Ctx, LibName) }));
+
+    std::string LinkerOption("-l");
+    LinkerOption += ShortLibName.str();
+    LinkerOptions->addOperand(MDNode::get(Ctx, { MDString::get(Ctx, LinkerOption) }));
+
+    Count++;
+  }
+
+  return Count > 0;
 }

@@ -93,5 +93,28 @@ private:
   JumpTargetManager *JTM;
 };
 
+/// \brief Adds global metadata for all linked dynamic libraries
+///
+/// This pass adds llvm.linker.options metadata to list
+/// all referenced dynamic libraries.
+class AddLibraryMetadataPass final : public llvm::ModulePass {
+public:
+  static char ID;
 
-#endif // _JUMPTARGETMANAGER_H
+  AddLibraryMetadataPass() : llvm::ModulePass(ID),
+    Libraries(nullptr) { }
+
+  AddLibraryMetadataPass(const std::vector<llvm::StringRef> *Libraries) :
+    llvm::ModulePass(ID),
+    Libraries(Libraries) {}
+
+  void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
+
+  bool runOnModule(llvm::Module &M) override;
+
+private:
+  const std::vector<llvm::StringRef> *Libraries;
+};
+
+
+#endif // _RELOCATIONPASS_H
